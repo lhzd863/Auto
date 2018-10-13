@@ -5,4 +5,4 @@
 #                                                    *
 #*****************************************************
 
-export AUTO_DATADB=PDATA;
+export AUTO_DATADB=etl;
