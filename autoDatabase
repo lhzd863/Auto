@@ -1,0 +1,8 @@
+#*****************************************************
+#              File: database.profile                *
+#                                                    *
+#   --  config the database environments --          *
+#                                                    *
+#*****************************************************
+
+export AUTO_DATADB=PDATA;
