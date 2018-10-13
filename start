@@ -1,0 +1,184 @@
+#!/usr/bin/ksh
+#*********************************************
+# PURPOSE: START ETL INSTANCE 
+# DATE   : 2010-10-19 
+# CREATED BY 
+#*********************************************
+
+ARGC=$#
+ARGS=`echo $@ | tr 'a-z' 'A-Z'`
+ScriptName="dwstart.sh"
+BASE_DIR=`pwd`
+PROFILE_DIR="${BASE_DIR}/../profile"
+CFG="${PROFILE_DIR}/etl.cfg"
+BASEPROFILE="${PROFILE_DIR}/etlbase.profile"
+
+
+usage(){
+	echo "usage:$ScriptName instance | all          ";
+	echo "  1-> $ScriptName instance1               ";
+	echo "  2-> $ScriptName instance1 instance2 ... ";
+	echo "  3-> $ScriptName all                     ";
+}
+
+
+checkparam(){
+    if [ $ARGC -eq 0 ]; then
+        return 0;
+    fi
+    for param in $ARGS
+    do
+        param=`echo $param | tr 'a-z' 'A-Z'`
+
+        if [ $param == "ALL" ] ; then
+            if [ $ARGC -gt 1 ]; then
+                return 0;
+            else
+                return 1;
+            fi
+        fi
+    done
+    return 1;
+}
+
+getsection(){
+    CfgFile=$1
+    Section=$2
+    StrCmd="
+        open(F, '$CfgFile');
+        @Lines=<F>;
+        close(F);
+        \$StartFlag=0;
+        foreach (@Lines){
+            next if( /^\s*\$/);
+            next if( /^\s*#.*\$/);
+            if( /^\s*\[\s*${Section}\s*\]\s*\$/i){
+                \$StartFlag++;
+                next;
+            }
+            last if( /^\s*\[.*\]/ && \$StartFlag);
+            if(\$StartFlag){
+                if( /(\S+)\s*=\s*(\S+)\s*#.*$/){
+                    print \"\$1=\$2\n\";
+                }elsif( /(\S+)\s*=\s*(\S+)\s*$/){
+                    print \"\$1=\$2\n\";
+                }
+            }
+        }
+		exit(\$StartFlag);
+    "
+    ConfigStr=`perl -e "$StrCmd"`
+	ret=$?
+
+    eval "$3='$ConfigStr'"
+	return $ret
+}
+
+
+startetl(){
+	ETLINSTANCE=$1
+	ConfigString=""	
+	FLAG=0
+
+	echo "* * * * * * Start ETL instance $ETLINSTANCE * * * * * *"  
+	
+	getsection $CFG "ETL INSTANCES" ConfigString
+	if [ $? -ge 1 ]; then	
+		FLAG=`echo $ConfigString|grep -ciE "${ETLINSTANCE}=.*"`	
+	fi
+	if [ $FLAG -eq 0 ]; then
+		echo "Cann't find ETL Instance ${ETLINSTANCE} "
+		return 
+	fi
+
+	getsection $CFG "ETL" ConfigString
+	if [ $? -gt 0 ]; then
+		for cmd in $ConfigString
+		do
+			eval "export $cmd"	
+		done
+	fi
+
+	getsection $CFG "$ETLINSTANCE" ConfigString
+	if [ $? -gt 0 ]; then
+
+		#========  run base profile ========================
+			if [ ! -e $BASEPROFILE ]; then
+				echo "Cann't find base profile $BASEPROFILE"
+				return
+			fi
+			. $BASEPROFILE
+		#===================================================
+
+		#========  run special  profile ========================
+			if [ -e ${PROFILE_DIR}/${ETLINSTANCE}.profile ]; then
+			   . ${PROFILE_DIR}/${ETLINSTANCE}.profile 
+			fi
+		#===================================================
+
+		unset ETL_INSTANCE_ENABLED
+		unset AUTO_HOME
+
+		for cmd in $ConfigString
+		do
+			eval "export $cmd"	
+		done
+
+		if [ ${ETL_INSTANCE_ENABLED:-0} -ne 1 ]; then
+			echo "Instance $ETLINSTANCE is disabled. \n"
+			return;
+		fi 
+		if [ "${AUTO_HOME:-*}" == "*" ]; then
+			echo "Environment variable AUTO_HOME is not set. \n"
+			return;
+		fi 
+		if [ ! -d ${AUTO_HOME} ]; then
+			echo "Cann't find AUTO_HOME '${AUTO_HOME}' \n"
+			return;
+		fi
+		env|grep -E "AUTO_HOME|AUTO_SERVER|AUTO_PRIMARY_SERVER|AUTO_AGENT_PORT|AUTO_WDOG_PORT"|sort
+		
+		nohup java -jar $AUTO_HOME/bin/DWAuto.jar $AUTO_HOME/etc/$AUTO_SERVER.cfg >$AUTO_HOME/LOG/Auto.log 2>&1 &
+		echo $!>$AUTO_HOME/lock/DWAuto.lock
+	else
+		echo "Cann't find Section Config [$ETLINSTANCE] in $CFG"
+	fi
+	echo ""
+}
+
+
+#*************************************************************************************
+#                                  main program
+#*************************************************************************************
+	checkparam
+	if  [ $? -eq 0 ] || [ `basename $0` != $ScriptName ]; then
+		usage;
+		return;
+	fi
+	
+	if [ ! -e $CFG ]; then
+		echo "Cann't find Config File $CFG"
+		return;
+	fi
+	
+	for ETL in $ARGS
+	do
+		case $ETL in
+			ALL)
+				getsection $CFG "ETL INSTANCES" ConfigString
+				if [ $? -eq 0 ]; then
+					echo "Section [ETL INSTANCES] is not configed correctly in $CFG"
+					return;
+				fi
+				for INSTANCE in $ConfigString		
+				do
+					INSTANCE=`echo $INSTANCE|sed 's/=.*//'`
+					startetl $INSTANCE
+				done
+				;;
+			  *)
+				startetl $ETL	
+				;;
+		esac
+	done
+
