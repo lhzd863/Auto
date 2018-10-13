@@ -1,0 +1,15 @@
+#*****************************************************
+#              File: etlbase.profile                 *
+#                                                    *
+#   --  config the basic etl environments --         *
+#                                                    *
+#*****************************************************
+
+export ETL_HOME=/home/ETL
+export ETL_INSTANCE_HOME=$ETL_HOME/ETL_INSTANCE
+export ETL_PROFILE_HOME=$ETL_HOME/profile
+
+#---- don't remove the following lines ---------------
+
+# database config
+. ${ETL_PROFILE_HOME}/database.profile
