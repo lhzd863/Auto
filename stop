@@ -1,0 +1,159 @@
+#!/usr/bin/ksh
+#*********************************************
+# PURPOSE: STOP ETL INSTANCE
+# DATE   : 2010-10-19
+# CREATED BY 
+#*********************************************
+
+ARGC=$#
+ARGS=`echo $@ | tr 'a-z' 'A-Z'`
+ScriptName="dwstop.sh"
+BASE_DIR=`pwd`
+PROFILE_DIR="${BASE_DIR}/../profile"
+CFG="${PROFILE_DIR}/etl.cfg"
+
+usage(){
+    echo "usage:$ScriptName instance | all          ";
+    echo "  1-> $ScriptName instance1               ";
+    echo "  2-> $ScriptName instance1 instance2 ... ";
+    echo "  3-> $ScriptName all                     ";
+}
+
+
+checkparam(){
+    if [ $ARGC -eq 0 ]; then
+ 		return 0;
+    fi
+    for param in $ARGS
+    do
+ 		param=`echo $param | tr 'a-z' 'A-Z'`
+ 		if [ $param == "ALL" ] ; then
+ 			if [ $ARGC -gt 1 ]; then
+ 				return 0;
+ 			else
+ 				return 1;
+ 			fi
+ 		fi
+    done
+    return 1;
+}
+
+getsection(){
+    CfgFile=$1
+    Section=$2
+    StrCmd="
+        open(F, '$CfgFile');
+        @Lines=<F>;
+        close(F);
+        \$StartFlag=0;
+        foreach (@Lines){
+            next if( /^\s*\$/);
+            next if( /^\s*#.*\$/);
+            if( /^\s*\[\s*${Section}\s*\]\s*\$/i){
+                \$StartFlag++;
+                next;
+            }
+            last if( /^\s*\[.*\]/ && \$StartFlag);
+            if(\$StartFlag){
+                if( /(\S+)\s*=\s*(\S+)\s*#.*$/){
+                    print \"\$1=\$2\n\";
+                }elsif( /(\S+)\s*=\s*(\S+)\s*$/){
+                    print \"\$1=\$2\n\";
+                }
+            }
+        }
+        exit(\$StartFlag);
+    "
+    ConfigStr=`perl -e "$StrCmd"`
+    ret=$?
+
+    eval "$3='$ConfigStr'"
+    return $ret
+}
+
+
+stopetl(){
+	ETLINSTANCE=$1
+	FLAG=0
+
+	
+	getsection $CFG "ETL INSTANCES" ConfigString
+    if [ $? -ge 1 ]; then
+        FLAG=`echo $ConfigString|grep -ciE "${ETLINSTANCE}=.*"`
+    fi
+    if [ $FLAG -eq 0 ]; then
+        echo "Cann't find ETL Instance ${ETLINSTANCE} "
+        return
+    fi
+
+    getsection $CFG "ETL" ConfigString
+    if [ $? -gt 0 ]; then
+        for cmd in $ConfigString
+        do
+            eval "export $cmd"
+        done
+    fi
+	getsection $CFG "$ETLINSTANCE" ConfigString
+    if [ $? -gt 0 ]; then
+		echo Stop etl instance $ETLINSTANCE ...
+		unset AUTO_HOME
+
+        for cmd in $ConfigString
+        do
+            eval "export $cmd"
+        done
+	
+		if [ "${AUTO_HOME:-*}" == "*" ]; then
+			echo "Environment variable AUTO_HOME is not set.\n"
+			return;
+		fi
+
+		LOCKDIR="${AUTO_HOME}/lock"
+			for lockfile in $LOCKDIR/DWAuto.lock    \
+				$LOCKDIR/DWAuto.lock
+		do
+			if [ -e "$lockfile" ]; then 
+				#awk '{system("kill -2 "$0)}' < $lockfile
+				awk '{system("kill -9 "$0)}' < $lockfile
+				if [ -e "$lockfile" ]; then 
+					rm  $lockfile
+				fi
+			fi
+		done
+
+	else
+		echo "Cann't find Section Config [$ETLINSTANCE] in $CFG"
+	fi
+}
+
+#*************************************************************************************
+#                                  main program
+#*************************************************************************************
+    checkparam
+    if  [ $? -eq 0 ] || [ `basename $0` != $ScriptName ]; then
+        usage;
+        return;
+    fi
+
+    for ETL in $ARGS
+    do
+        case $ETL in
+			ALL)
+				getsection $CFG "ETL INSTANCES" ConfigString
+                if [ $? -eq 0 ]; then
+                    echo "Section [ETL INSTANCES] is not configed correctly in $CFG"
+                    return;
+                fi
+                for INSTANCE in $ConfigString
+                do
+                    INSTANCE=`echo $INSTANCE|sed 's/=.*//'`
+                    stopetl $INSTANCE
+                done
+                ;;
+              *)
+                stopetl $ETL
+                ;;
+        esac
+    done
+
+
